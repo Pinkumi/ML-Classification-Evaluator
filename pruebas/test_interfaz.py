@@ -22,6 +22,7 @@ class PruebasControlador(unittest.TestCase):
     def controlador(self):
         aplicacion = self.aplicacion.__new__(self.aplicacion)
         aplicacion.evaluador = Evaluador(self.registros, self.clases)
+        aplicacion.clases = self.clases
         aplicacion.activo = True
         aplicacion.tarea = None
         aplicacion.ventana = MagicMock()
