@@ -143,7 +143,11 @@ class Aplicacion:
             return
         try:
             opciones = {'Automatico': None, 'Si': True, 'No': False}
-            registros, clases = leer_csv(self.ruta.get(), int(self.cantidad.get()), opciones[self.encabezado.get()])
+            try:
+                cantidad = int(self.cantidad.get())
+            except ValueError as error:
+                raise ValueError('Ingrese una cantidad de clases entera, mayor o igual a 2.') from error
+            registros, clases = leer_csv(self.ruta.get(), cantidad, opciones[self.encabezado.get()])
         except (ValueError, OSError) as error:
             messagebox.showerror('No se pudo cargar el archivo', str(error))
             return
@@ -152,6 +156,10 @@ class Aplicacion:
         self.evaluador = None
         self.guardar_boton.config(state='disabled')
         self.matriz_boton.config(state='disabled')
+        self.limpiar_resultados()
+        self.progreso.config(value=0)
+        self.detalle.set('Sin registros procesados del nuevo archivo.')
+        self.llenar(self.tabla_dato, [])
         self.nombres = {}
         for widget in self.campos_clases.winfo_children():
             widget.destroy()
@@ -178,6 +186,11 @@ class Aplicacion:
         for fila in filas:
             tabla.insert('', 'end', values=fila)
 
+    def limpiar_resultados(self):
+        for tabla in (self.tabla_conteos, self.tabla_metricas, self.tabla_matriz):
+            self.llenar(tabla, [])
+        self.resumen.config(text='Complete una evaluacion para ver los resultados.')
+
     def iniciar(self):
         if self.activo or not self.registros:
             return
@@ -186,6 +199,7 @@ class Aplicacion:
         except (ValueError, OSError) as error:
             messagebox.showerror('Revise la configuracion de salida', str(error))
             return
+        self.limpiar_resultados()
         self.evaluador = Evaluador(self.registros, self.clases)
         self.activo = True
         self.progreso.config(maximum=len(self.registros), value=0)
