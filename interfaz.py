@@ -177,22 +177,140 @@ class Aplicacion:
             tabla.insert('', 'end', values=fila)
 
     def iniciar(self):
-        pass
+        if self.activo or not self.registros:
+            return
+        self.evaluador = Evaluador(self.registros, self.clases)
+        self.activo = True
+        self.progreso.config(maximum=len(self.registros), value=0)
+        self.iniciar_boton.config(state='disabled')
+        self.guardar_boton.config(state='disabled')
+        self.matriz_boton.config(state='disabled')
+        self.terminar.config(state='normal')
+        self.libro.tab(self.configuracion, state='disabled')
+        self.libro.tab(self.resultados, state='disabled')
+        if self.modo.get() == 'Completo':
+            self.procesar_lote()
+        else:
+            self.siguiente.config(state='normal')
+            self.restantes.config(state='normal')
+            self.paso()
+
+    def actualizar_registro(self, evaluacion):
+        evaluador = self.evaluador
+        registro = evaluador.registros[evaluador.posicion - 1]
+        self.detalle.set(f'Registro {evaluador.posicion} de {len(evaluador.registros)} | '
+                         f'ID: {registro[0]} | Clase verdadera: {registro[1]} | Clase predicha: {registro[2]}')
+        self.llenar(self.tabla_dato, evaluacion.items())
+        self.progreso.config(value=evaluador.posicion)
+        self.estado.set(f'Procesados {evaluador.posicion} de {len(evaluador.registros)} registros.')
+        if evaluador.terminado:
+            self.finalizar()
+
+    def finalizar(self):
+        self.activo = False
+        self.tarea = None
+        self.siguiente.config(state='disabled')
+        self.restantes.config(state='disabled')
+        self.terminar.config(state='disabled')
+        self.iniciar_boton.config(state='normal')
+        self.libro.tab(self.configuracion, state='normal')
+        self.libro.tab(self.resultados, state='normal')
+        conteos, metricas, promedios, matriz = self.evaluador.resultados()
+        self.llenar(self.tabla_conteos, [[c, *(conteos[c][k] for k in ('TP', 'TN', 'FP', 'FN'))]
+                                        for c in self.clases])
+        filas = [[c, *(f'{metricas[c][k]:.4f}' for k in promedios)] for c in self.clases]
+        filas.append(['Promedio macro', *(f'{v:.4f}' for v in promedios.values())])
+        self.llenar(self.tabla_metricas, filas)
+        self.tabla_matriz.master.destroy()
+        # Identificadores internos independientes de las etiquetas del dataset.
+        columnas = ['real'] + [f'predicha_{i}' for i in range(len(self.clases))]
+        self.tabla_matriz = self.tabla(self.panel_matriz, columnas)
+        for identificador, texto in zip(columnas, ['Real / Prediccion', *self.clases]):
+            self.tabla_matriz.heading(identificador, text=texto)
+            self.tabla_matriz.column(identificador, width=max(110, len(texto) * 9))
+        self.llenar(self.tabla_matriz, [[c, *fila] for c, fila in zip(self.clases, matriz)])
+        self.resumen.config(text=f'Evaluacion completa: {len(self.registros)} registros, {len(self.clases)} clases.')
+        self.guardar_boton.config(state='normal')
+        self.matriz_boton.config(state='normal')
+        self.libro.select(self.resultados)
+        self.estado.set('Evaluacion terminada. Guardando archivos CSV...')
+        self.guardar()
 
     def paso(self):
-        pass
+        if self.activo and self.tarea is None:
+            self.actualizar_registro(self.evaluador.avanzar())
 
     def procesar_lote(self):
-        pass
+        if not self.activo:
+            return
+        self.siguiente.config(state='disabled')
+        self.restantes.config(state='disabled')
+        self.actualizar_registro(self.evaluador.avanzar(max(1, 500 // len(self.clases))))
+        if self.activo:
+            self.tarea = self.ventana.after(1, self.continuar_lote)
+
+    def continuar_lote(self):
+        self.tarea = None
+        self.procesar_lote()
 
     def cancelar(self):
-        pass
+        if self.tarea is not None:
+            self.ventana.after_cancel(self.tarea)
+            self.tarea = None
+        self.activo = False
+        self.evaluador = None
+        self.siguiente.config(state='disabled')
+        self.restantes.config(state='disabled')
+        self.terminar.config(state='disabled')
+        self.guardar_boton.config(state='disabled')
+        self.matriz_boton.config(state='disabled')
+        self.iniciar_boton.config(state='normal' if self.registros else 'disabled')
+        self.libro.tab(self.configuracion, state='normal')
+        self.libro.tab(self.resultados, state='normal')
+        self.libro.select(self.configuracion)
+        self.progreso.config(value=0)
+        self.llenar(self.tabla_dato, [])
+        self.detalle.set('Proceso cancelado. Inicie nuevamente para evaluar todos los registros.')
+        self.estado.set('Evaluacion cancelada. No se exportaron resultados parciales.')
 
     def guardar(self):
-        pass
+        if self.evaluador is None or not self.evaluador.terminado:
+            return
+        try:
+            nombres = {c: v.get() for c, v in self.nombres.items()}
+            rutas = validar_nombres(self.carpeta.get(), [*nombres.values(), self.nombre_final.get(),
+                                                        self.nombre_matriz.get()])
+            existentes = [str(ruta) for ruta in rutas if ruta.exists()]
+            if existentes and not messagebox.askyesno('Confirmar sobrescritura',
+                    'Ya existen estos archivos. ¿Desea reemplazarlos?\n' + '\n'.join(existentes)):
+                self.estado.set('Evaluacion completa. Exportacion omitida; puede guardar despues.')
+                return
+            rutas = exportar_resultados(self.evaluador, self.carpeta.get(), nombres,
+                                        self.nombre_final.get(), self.nombre_matriz.get())
+        except (OSError, ValueError) as error:
+            self.estado.set('Evaluacion completa. No se pudieron guardar todos los archivos; vuelva a intentarlo.')
+            messagebox.showerror('Error al guardar', str(error))
+            return
+        self.estado.set(f'Evaluacion completa. Se guardaron {len(rutas)} archivos CSV en {self.carpeta.get()}.')
+        messagebox.showinfo('Archivos generados', '\n'.join(str(ruta) for ruta in rutas))
 
     def guardar_matriz(self):
-        pass
+        if self.evaluador is None or not self.evaluador.terminado:
+            return
+        ruta = filedialog.asksaveasfilename(title='Guardar matriz de confusion',
+            initialdir=self.carpeta.get(), initialfile=self.nombre_matriz.get(),
+            defaultextension='.csv', filetypes=[('Archivos CSV', '*.csv')])
+        if ruta:
+            try:
+                escribir_csv(ruta, filas_matriz(self.evaluador))
+            except (OSError, ValueError) as error:
+                messagebox.showerror('Error al guardar la matriz', str(error))
+            else:
+                messagebox.showinfo('Matriz guardada', ruta)
 
     def cerrar(self):
+        if self.activo and not messagebox.askyesno('Salir', '¿Cancelar la evaluacion y cerrar?'):
+            return
+        if self.tarea is not None:
+            self.ventana.after_cancel(self.tarea)
         self.ventana.destroy()
