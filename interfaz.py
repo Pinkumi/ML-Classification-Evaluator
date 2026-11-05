@@ -26,6 +26,7 @@ class Aplicacion:
         self.estado = tk.StringVar(value='Seleccione y valide un archivo CSV.')
         self.detalle = tk.StringVar(value='Sin registros procesados.')
         self.nombres = {}
+        self.ruta_cargada = None
         self.libro = ttk.Notebook(ventana)
         self.libro.pack(fill='both', expand=True, padx=12, pady=12)
         self.configuracion = self.pagina('Configuracion')
@@ -147,6 +148,7 @@ class Aplicacion:
             messagebox.showerror('No se pudo cargar el archivo', str(error))
             return
         self.registros, self.clases = registros, clases
+        self.ruta_cargada = Path(self.ruta.get()).resolve()
         self.evaluador = None
         self.guardar_boton.config(state='disabled')
         self.matriz_boton.config(state='disabled')
@@ -178,6 +180,11 @@ class Aplicacion:
 
     def iniciar(self):
         if self.activo or not self.registros:
+            return
+        try:
+            self.validar_destinos()
+        except (ValueError, OSError) as error:
+            messagebox.showerror('Revise la configuracion de salida', str(error))
             return
         self.evaluador = Evaluador(self.registros, self.clases)
         self.activo = True
@@ -273,13 +280,24 @@ class Aplicacion:
         self.detalle.set('Proceso cancelado. Inicie nuevamente para evaluar todos los registros.')
         self.estado.set('Evaluacion cancelada. No se exportaron resultados parciales.')
 
+    def validar_destinos(self):
+        rutas = validar_nombres(self.carpeta.get(), [v.get() for v in self.nombres.values()] +
+                                [self.nombre_final.get(), self.nombre_matriz.get()])
+        if any(ruta.resolve() == self.ruta_cargada for ruta in rutas):
+            raise ValueError('Los archivos de salida no pueden reemplazar el dataset de entrada.')
+        if any(ruta.is_dir() for ruta in rutas):
+            raise ValueError('Un nombre de salida corresponde a una carpeta existente.')
+        import tempfile
+        with tempfile.TemporaryFile(dir=self.carpeta.get()):
+            pass
+        return rutas
+
     def guardar(self):
         if self.evaluador is None or not self.evaluador.terminado:
             return
         try:
             nombres = {c: v.get() for c, v in self.nombres.items()}
-            rutas = validar_nombres(self.carpeta.get(), [*nombres.values(), self.nombre_final.get(),
-                                                        self.nombre_matriz.get()])
+            rutas = self.validar_destinos()
             existentes = [str(ruta) for ruta in rutas if ruta.exists()]
             if existentes and not messagebox.askyesno('Confirmar sobrescritura',
                     'Ya existen estos archivos. ¿Desea reemplazarlos?\n' + '\n'.join(existentes)):
@@ -302,6 +320,8 @@ class Aplicacion:
             defaultextension='.csv', filetypes=[('Archivos CSV', '*.csv')])
         if ruta:
             try:
+                if Path(ruta).resolve() == self.ruta_cargada:
+                    raise ValueError('La matriz no puede reemplazar el dataset de entrada.')
                 escribir_csv(ruta, filas_matriz(self.evaluador))
             except (OSError, ValueError) as error:
                 messagebox.showerror('Error al guardar la matriz', str(error))
