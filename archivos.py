@@ -41,3 +41,65 @@ def leer_csv(ruta, numero_clases, encabezado=None):
     if len(clases) != numero_clases:
         raise ValueError(f"Se detectaron {len(clases)} clases ({', '.join(clases)}); se indicaron {numero_clases}.")
     return registros, clases
+
+
+def validar_nombres(carpeta, nombres):
+    carpeta = Path(carpeta)
+    if not carpeta.is_dir():
+        raise ValueError("La carpeta de salida no existe.")
+    normalizados = []
+    for nombre in nombres:
+        if (not nombre.strip() or nombre != nombre.strip()
+                or any(c in nombre for c in '/\\<>:"|?*')
+                or Path(nombre).name != nombre or not nombre.lower().endswith('.csv')):
+            raise ValueError("Use nombres de archivo validos terminados en .csv, sin rutas.")
+        normalizados.append(nombre.casefold())
+    if len(set(normalizados)) != len(normalizados):
+        raise ValueError("Los nombres de salida deben ser distintos.")
+    return [carpeta / nombre for nombre in nombres]
+
+
+def escribir_csv(ruta, filas):
+    with Path(ruta).open('w', encoding='utf-8-sig', newline='') as archivo:
+        csv.writer(archivo).writerows(filas)
+
+
+def filas_matriz(evaluador):
+    if not evaluador.terminado:
+        raise ValueError("Termine el procesamiento antes de guardar.")
+    return [['Real / Prediccion', *evaluador.clases]] + [
+        [clase, *fila] for clase, fila in zip(evaluador.clases, evaluador.matriz)]
+
+
+def exportar_resultados(evaluador, carpeta, nombres_clases, nombre_final, nombre_matriz):
+    conteos, metricas, promedios, _ = evaluador.resultados()
+    nombres = [nombres_clases[clase] for clase in evaluador.clases] + [nombre_final, nombre_matriz]
+    rutas = validar_nombres(carpeta, nombres)
+    documentos = []
+    for clase in evaluador.clases:
+        documentos.append([['ID-Dato', 'Evaluacion']] + [
+            [registro[0], resultado[clase]] for registro, resultado in
+            zip(evaluador.registros, evaluador.evaluaciones)])
+    filas = [['Sumatorias por clase'], ['Clase', 'TP', 'TN', 'FP', 'FN']]
+    filas += [[clase, *(conteos[clase][c] for c in ('TP', 'TN', 'FP', 'FN'))]
+              for clase in evaluador.clases]
+    filas += [[], ['Metricas individuales'], ['Clase', 'Precision', 'Recall', 'Accuracy', 'F1']]
+    filas += [[clase, *(metricas[clase][c] for c in promedios)] for clase in evaluador.clases]
+    filas += [[], ['Promedios macro'], ['Metrica', 'Promedio general']]
+    filas += [[nombre, valor] for nombre, valor in promedios.items()]
+    documentos.extend([filas, filas_matriz(evaluador)])
+    # Preparar todo antes de reemplazar los destinos evita archivos CSV truncados.
+    import tempfile
+    import os
+    temporales = []
+    try:
+        for filas in documentos:
+            with tempfile.NamedTemporaryFile(dir=carpeta, suffix='.tmp', delete=False) as temporal:
+                temporales.append(Path(temporal.name))
+            escribir_csv(temporales[-1], filas)
+        for temporal, ruta in zip(temporales, rutas):
+            os.replace(temporal, ruta)
+    finally:
+        for temporal in temporales:
+            temporal.unlink(missing_ok=True)
+    return rutas
