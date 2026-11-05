@@ -43,3 +43,37 @@ def calcular_metricas(conteos):
     promedios = {nombre: dividir(sum(m[nombre] for m in metricas.values()), len(metricas))
                  for nombre in ('Precision', 'Recall', 'Accuracy', 'F1')}
     return metricas, promedios
+
+
+class Evaluador:
+    """El mismo acumulador permite avanzar un registro o varios por llamada."""
+
+    def __init__(self, registros, clases):
+        self.registros = registros
+        self.clases = clases
+        self.posicion = 0
+        self.conteos = crear_conteos(clases)
+        self.evaluaciones = []
+        self.indices = {clase: indice for indice, clase in enumerate(clases)}
+        self.matriz = [[0 for _ in clases] for _ in clases]
+
+    @property
+    def terminado(self):
+        return self.posicion == len(self.registros)
+
+    def avanzar(self, cantidad=1):
+        ultima = None
+        for _ in range(min(cantidad, len(self.registros) - self.posicion)):
+            registro = self.registros[self.posicion]
+            ultima = evaluar_registro(registro, self.clases)
+            acumular(self.conteos, ultima)
+            self.evaluaciones.append(ultima)
+            self.matriz[self.indices[registro[1]]][self.indices[registro[2]]] += 1
+            self.posicion += 1
+        return ultima
+
+    def resultados(self):
+        if not self.terminado:
+            raise ValueError("La evaluacion todavia no ha terminado.")
+        metricas, promedios = calcular_metricas(self.conteos)
+        return self.conteos, metricas, promedios, self.matriz
